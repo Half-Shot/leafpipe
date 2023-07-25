@@ -1,0 +1,21 @@
+[package]
+name = "leafpipe"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+apodize = "1.0.0"
+chrono = "0.4.26"
+colors-transform = "0.2.11"
+enterpolation = "0.2.1"
+futures = "0.3"
+influxdb = { version = "0.7.0", features = ["derive"] }
+libspa-sys = "0.6.0"
+pipewire = "0.6.0"
+reqwest = { version = "0.11.18", features = ["json"] }
+rustfft = "6.1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.29.1", features = ["full"] }
