@@ -1,41 +1,29 @@
-use std::ops::Sub;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
-use std::{net::UdpSocket, vec};
 use colors_transform::{Color, Hsl};
-use nanoleaf::{NanoleafLayoutResponse, NanoleafEffectPayload};
-use pipewire::spa::Direction;
-use pipewire::spa::pod::Value;
-use pipewire::spa::pod::deserialize::PodDeserializer;
-use pipewire::spa::utils::Id;
-use pipewire::stream::StreamFlags;
+use nanoleaf::{NanoleafClient, NanoleafEffectPayload, NanoleafLayoutResponse};
 use pipewire::{MainLoop, Context};
-use vis::BufferManager;
-use std::thread;
 use pipewire::prelude::*;
 use pipewire::properties;
-use influxdb::{Client as InfluxDBClient, WriteQuery};
-use influxdb::InfluxDbWriteable;
-use chrono::{DateTime, Utc};
+use pipewire::spa::Direction;
+use pipewire::spa::pod::deserialize::PodDeserializer;
+use pipewire::spa::pod::Value;
+use pipewire::spa::utils::Id;
+use pipewire::stream::StreamFlags;
+use simple_mdns::async_discovery::OneShotMdnsResolver;
+use std::ops::Sub;
+use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::{Duration, Instant};
+use vis::BufferManager;
+use config::Config;
+
 
 use crate::audio::Fixate;
 use crate::slidingwindow::SlidingWindow;
-use crate::nanoleaf::NanoleafClient;
 
 mod audio;
 mod slidingwindow;
 mod vis;
 mod nanoleaf;
-
-#[derive(InfluxDbWriteable)]
-struct PanelValues {
-    time: DateTime<Utc>,
-    r: u8,
-    g: u8,
-    b: u8,
-    i: f32,
-    panel_index: u16,
-}
 
 #[derive(Debug)]
 struct StreamConfiguration {
@@ -51,11 +39,8 @@ struct StreamData {
 
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
 
-async fn update_lights(nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, client: InfluxDBClient) {
+async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>) {
     let now: Instant = Instant::now();
-    let mut last_metric_time = Instant::now();
-
-    let panels = nanoleaf.get_panels().await.unwrap();
 
     // Needs to be over a sliding window.
     let mut window = SlidingWindow::new(512);
@@ -68,7 +53,6 @@ async fn update_lights(nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<Buff
                 let hue = ((now.elapsed().as_secs_f32() / 10.0).sin() * 180.0) + 180.0;
                 let saturation = ((now.elapsed().as_secs_f32() / 10.0).sin() * -180.0) + 180.0;
                 let mut panel_index: usize = 0;
-                let mut readings: Vec<WriteQuery> = Vec::new();
 
                 for panel in &panels.position_data {
                     let (min, max) = window.submit_new(data[panel_index]);
@@ -78,29 +62,12 @@ async fn update_lights(nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<Buff
                     let r = unsafe { rgb.0.to_int_unchecked::<u8>() };
                     let g = unsafe { rgb.1.to_int_unchecked::<u8>() };
                     let b = unsafe { rgb.2.to_int_unchecked::<u8>() };
-
-                    readings.push(PanelValues {
-                        time: Utc::now(),
-                        r: r,
-                        g: g,
-                        b: b,
-                        i: intensity,
-                        panel_index: panel_index as u16,
-                    }.into_query("panel_rgb"));
-
                     effect.write_effect(panel.panel_id, r, g, b, 1);
                     panel_index += 1;
                 }
                 if let Err(err) = nanoleaf.send_effect(&effect) {
                     println!("Failed to send effect to nanoleaf {:?}", err);
                 }
-
-                // Occasionally send metrics.
-                if last_metric_time.elapsed().as_millis() > 500 {
-                    last_metric_time = Instant::now();
-                }
-            } else {
-                println!("No data");
             }
         }
 
@@ -113,17 +80,21 @@ async fn update_lights(nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<Buff
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let influx = InfluxDBClient::new("http://localhost:8086", "leafpipe").with_token("qE5qMT6shkRhT6KylDRU864Izv_MGC2qeWuebjTEN2IIpWoFnxfsKd07GahqhIBe2wtBMlhSVa2zC3ip5I2zww==");
-    let nanoleaf: NanoleafClient = NanoleafClient::connect("GuHySGmkcf2zrFhsdEZrax19QhYL01ge", "192.168.1.132", 16021).await.unwrap();
-    let panels = nanoleaf.get_panels().await.unwrap();
-    println!("{:?}", panels);
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("192.168.1.132:60222")?;
+    let config_builder = Config::builder();
 
-    // 0 3  ‚---> nPanels
-    // 1 118 255 0 255 0 0 12  ‚---> Set panel color
-    // 2 139 255 255 0 0 0 128  ‚---> Set panel color
-    // 0 235 0 255 255 0 1 195 ‚---> Set panel color
+    if let Some(config_file) =xdg::BaseDirectories::with_prefix("leafpipe")?.find_config_file("config.toml") {
+        config_builder.add_source(config::File::with_name(config_file.to_str().unwrap()));
+    }
+    let config = config_builder.add_source(config::Environment::with_prefix("LP")).build()?;
+
+
+
+    let nanoleaf: NanoleafClient = NanoleafClient::connect(
+        config.get_string("nanoleaf_token").expect("Missing nanoleaf_token config"),
+        config.get_string("nanoleaf_host").expect("Missing nanoleaf_host config"),
+        config.get_int("nanoleaf_port").unwrap_or(16021).try_into().expect("Provided nanoleaf_port did not fit in range"),
+    ).await.unwrap();
+    let panels = nanoleaf.get_panels().await.unwrap();
 
 
     let mainloop = MainLoop::new().unwrap();
@@ -150,7 +121,7 @@ async fn main() -> std::io::Result<()> {
         },
         StreamData {
             configuration: None,
-            buffer_manager: buffer_manager,
+            buffer_manager,
         },
     )
 	.param_changed(|id, data, raw_pod| {
@@ -173,11 +144,6 @@ async fn main() -> std::io::Result<()> {
 					.unwrap().value
 					.fixate().unwrap();
 				
-				let format: Id = object.properties.iter()
-					.find(|p| p.key == libspa_sys::SPA_FORMAT_AUDIO_format)
-					.unwrap().value
-					.fixate().unwrap();
-				
 				let rate: i32 = object.properties.iter()
 					.find(|p| p.key == libspa_sys::SPA_FORMAT_AUDIO_rate)
 					.unwrap().value
@@ -195,7 +161,6 @@ async fn main() -> std::io::Result<()> {
 						rate: rate as u32,
 						channels: channels as usize,
 					});
-                    println!("config: {:?}", data.configuration);
 				}
 			}
 		}
@@ -203,7 +168,6 @@ async fn main() -> std::io::Result<()> {
     .process(|_stream, stream_data| {
 		if let Some(mut buffer) = _stream.dequeue_buffer() {
             let config = stream_data.configuration.as_ref().unwrap();
-			// TODO: this is just the left channel — maybe handle all channels
             for channel_index in 0..config.channels-1 {
                 let channel = buffer.datas_mut().get_mut(channel_index).unwrap();
                 let chunk = channel.chunk(); 
@@ -229,7 +193,8 @@ async fn main() -> std::io::Result<()> {
 		StreamFlags::AUTOCONNECT | StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS,
 		&mut [params.as_ptr().cast()],
 	).unwrap();
-    tokio::spawn(async move { update_lights(nanoleaf, buffer_manager_lights, influx).await });
+    let panels: nanoleaf::NanoleafLayoutResponse = nanoleaf.get_panels().await.unwrap();
+    tokio::spawn(async move { update_lights(panels, nanoleaf, buffer_manager_lights).await });
 
     mainloop.run();
     stream.disconnect().unwrap();

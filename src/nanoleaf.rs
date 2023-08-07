@@ -44,19 +44,24 @@ pub struct NanoleafEffectPayload {
 
 impl NanoleafEffectPayload {
     pub fn new(panels_to_update: usize) -> Self {
-        let mut buf = vec![0 as u8; 2 + (EFFECT_SIZE_BYTES*panels_to_update)];
+        let mut buf = vec![0_u8; 2 + (EFFECT_SIZE_BYTES*panels_to_update)];
         buf[0] = (panels_to_update >> 8).try_into().unwrap();
         buf[1] = (panels_to_update % 256).try_into().unwrap();
         NanoleafEffectPayload {
-            head: 0,
+            head: 2,
             buf,
         }
     }
 
     /// Write an effect to the payload to be sent.
     /// `transition_time_cs` is in deciseconds.
-    pub fn write_effect(self: &mut Self, panel_id: u16, r: u8, g: u8, b: u8, transition_time_ds: u8) {
-        self.buf[self.head + 0] = (panel_id >> 8).try_into().unwrap();
+    pub fn write_effect(&mut self, panel_id: u16, r: u8, g: u8, b: u8, transition_time_ds: u8) {
+        // 0 3  ‚---> nPanels
+        // 1 118 255 0 255 0 0 12  ‚---> Set panel color
+        // 2 139 255 255 0 0 0 128  ‚---> Set panel color
+        // 0 235 0 255 255 0 1 195 ‚---> Set panel color
+
+        self.buf[self.head] = (panel_id >> 8).try_into().unwrap();
         self.buf[self.head + 1] = (panel_id % 256).try_into().unwrap();
         self.buf[self.head + 2] = r;
         self.buf[self.head + 3] = g;
@@ -71,15 +76,15 @@ impl NanoleafEffectPayload {
 const UDP_PORT: u16 = 60222;
 
 impl NanoleafClient {
-    pub async fn connect(access_token: &str, host: &str, http_port: u16) -> Result<Self, NanoleafError> {
+    pub async fn connect(access_token: String, host: String, http_port: u16) -> Result<Self, NanoleafError> {
         let base_url = format!("http://{host}:{http_port}/api/v1/{access_token}", host=host, access_token=access_token);
 
         let effects_result = reqwest::get(format!("{base_url}/effects"))
             .await
             .and_then(|res| res.error_for_status()).map_err(|err| NanoleafError {
-                msg: format!("Failed to contact nanoleaf API {:?}", err).to_string(),
+                msg: format!("Failed to contact nanoleaf API {:?}", err),
             })?.json::<NanoleafEffectsResponse>().await.map_err(|err| NanoleafError {
-                msg: format!("Failed to parse JSON from /effects API {:?}", err).to_string(),
+                msg: format!("Failed to parse JSON from /effects API {:?}", err),
             })?;
 
         if effects_result.select != "*ExtControl*" {
@@ -99,23 +104,23 @@ impl NanoleafClient {
             },
             Err(e) => {
                 Err(NanoleafError {
-                    msg: format!("Failed to open UDP socket {:?}", e).to_string(),
+                    msg: format!("Failed to open UDP socket {:?}", e),
                 })
             }
         }
     }
 
-    pub async fn get_panels(self: &Self) -> Result<NanoleafLayoutResponse, NanoleafError> {
+    pub async fn get_panels(&self) -> Result<NanoleafLayoutResponse, NanoleafError> {
         reqwest::get(format!("{base_url}/panelLayout/layout", base_url=self.base_url))
         .await
         .and_then(|res| res.error_for_status()).map_err(|err| NanoleafError {
-            msg: format!("Failed to contact nanoleaf API {:?}", err).to_string(),
+            msg: format!("Failed to contact nanoleaf API {:?}", err),
         })?.json::<NanoleafLayoutResponse>().await.map_err(|err| NanoleafError {
-            msg: format!("Failed to parse JSON from /panelLayout/layout API {:?}", err).to_string(),
+            msg: format!("Failed to parse JSON from /panelLayout/layout API {:?}", err),
         })
     }
 
-    pub fn send_effect(self: &Self, payload: &NanoleafEffectPayload)->Result<(), std::io::Error> {
+    pub fn send_effect(&self, payload: &NanoleafEffectPayload)->Result<(), std::io::Error> {
         self.socket.send(&payload.buf).map(|_| {})
     }
     

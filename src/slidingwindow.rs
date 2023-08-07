@@ -37,15 +37,17 @@ impl SlidingWindow {
         }
         if self.updates > self.limit {
             self.updates = 0;
-            println!("Calculating new limits");
+
             self.max = *self.recorded_intensites
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.total_cmp(b)).unwrap().1;
+
             self.min = *self.recorded_intensites
             .iter()
             .enumerate()
             .min_by(|(_, a), (_, b)| a.total_cmp(b)).unwrap().1;
+
         }
         (
            self.min,
