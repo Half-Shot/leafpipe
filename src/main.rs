@@ -117,14 +117,12 @@ fn discover_host(config: &Config) -> (String, u16) {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP")).add_source(
-        config::File::with_name("config.toml")
-    );
+    let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP"));
     
     let config = if let Some(config_file) = xdg::BaseDirectories::with_prefix("leafpipe").unwrap().find_config_file("config.toml") {
-        config_builder.add_source(config::File::with_name(config_file.to_str().unwrap())).build().unwrap()
+        config_builder.add_source(config::File::from(config_file)).build().unwrap()
     } else {
-        config_builder.build().unwrap()
+        config_builder.add_source(config::File::with_name("config.toml")).build().unwrap()
     };
 
     let service = discover_host(&config);

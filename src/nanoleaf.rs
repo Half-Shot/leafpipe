@@ -36,6 +36,8 @@ pub struct NanoleafLayoutResponse {
 }
 
 const EFFECT_SIZE_BYTES: usize = 8;
+const UDP_PORT: u16 = 60222;
+pub const DEFAULT_API_PORT: u16 = 16021;
 
 pub struct NanoleafEffectPayload {
     pub buf: Vec<u8>,
@@ -73,8 +75,6 @@ impl NanoleafEffectPayload {
     }
 }
 
-const UDP_PORT: u16 = 60222;
-pub const DEFAULT_API_PORT: u16 = 16021;
 
 impl NanoleafClient {
 
