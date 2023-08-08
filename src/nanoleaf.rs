@@ -74,8 +74,10 @@ impl NanoleafEffectPayload {
 }
 
 const UDP_PORT: u16 = 60222;
+pub const DEFAULT_API_PORT: u16 = 16021;
 
 impl NanoleafClient {
+
     pub async fn connect(access_token: String, host: String, http_port: u16) -> Result<Self, NanoleafError> {
         let base_url = format!("http://{host}:{http_port}/api/v1/{access_token}", host=host, access_token=access_token);
 

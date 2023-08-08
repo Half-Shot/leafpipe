@@ -8,13 +8,14 @@ use pipewire::spa::pod::deserialize::PodDeserializer;
 use pipewire::spa::pod::Value;
 use pipewire::spa::utils::Id;
 use pipewire::stream::StreamFlags;
-use simple_mdns::async_discovery::OneShotMdnsResolver;
+use core::panic;
 use std::ops::Sub;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use vis::BufferManager;
-use config::Config;
+use config::{Config, ConfigError};
+use mdns_sd::{ServiceDaemon, ServiceEvent};
 
 
 use crate::audio::Fixate;
@@ -38,6 +39,7 @@ struct StreamData {
 }
 
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
+const MDNS_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>) {
     let now: Instant = Instant::now();
@@ -78,23 +80,65 @@ async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient,
     }
 }
 
+fn discover_host(config: &Config) -> (String, u16) {
+    match config.get_string("nanoleaf_host") {
+        Ok(config_host) => {
+            (
+                config_host,
+                config.get_int("nanoleaf_port").unwrap_or(nanoleaf::DEFAULT_API_PORT.into()).try_into().expect("Provided nanoleaf_port did not fit in range")
+            )
+        },
+        Err(ConfigError::NotFound(_err)) => {
+            println!("Discovering nanoleaf via mdns");
+            let mdns: ServiceDaemon = ServiceDaemon::new().expect("Failed to create daemon");
+            // Browse for a service type.
+            let service_type = "_nanoleafapi._tcp.local.";
+            let receiver = mdns.browse(service_type).expect("Failed to browse");
+            while let Ok(event) = receiver.recv_timeout(MDNS_TIMEOUT) {
+                match event {
+                    ServiceEvent::ServiceResolved(info) => {
+                        println!("Discovered service {} {:?}", info.get_fullname(), info.get_addresses());
+                        let service_ip = info.get_addresses().iter().next().expect("Service found but with no addresses").to_string();
+                        return (service_ip, info.get_port());
+                    }
+                    _ => {
+                        // Not interested in other events.
+                    }
+                }
+            }
+            panic!("Failed to find nanoleaf");
+        }
+        Err(err) => {
+            println!("Encountered error with config {:?}", err);
+            panic!("Unexpected error handling config")
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let config_builder = Config::builder();
+    let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP")).add_source(
+        config::File::with_name("config.toml")
+    );
+    
+    let config = if let Some(config_file) = xdg::BaseDirectories::with_prefix("leafpipe").unwrap().find_config_file("config.toml") {
+        config_builder.add_source(config::File::with_name(config_file.to_str().unwrap())).build().unwrap()
+    } else {
+        config_builder.build().unwrap()
+    };
 
-    if let Some(config_file) =xdg::BaseDirectories::with_prefix("leafpipe")?.find_config_file("config.toml") {
-        config_builder.add_source(config::File::with_name(config_file.to_str().unwrap()));
-    }
-    let config = config_builder.add_source(config::Environment::with_prefix("LP")).build()?;
-
+    let service = discover_host(&config);
+    println!("Discovered nanoleaf on {}:{}", service.0, service.1);
 
 
     let nanoleaf: NanoleafClient = NanoleafClient::connect(
         config.get_string("nanoleaf_token").expect("Missing nanoleaf_token config"),
-        config.get_string("nanoleaf_host").expect("Missing nanoleaf_host config"),
-        config.get_int("nanoleaf_port").unwrap_or(16021).try_into().expect("Provided nanoleaf_port did not fit in range"),
+        service.0,
+        service.1,
     ).await.unwrap();
-    let panels = nanoleaf.get_panels().await.unwrap();
+
+    // Check we can contact the nanoleaf
+    nanoleaf.get_panels().await.expect("Could not contact nanoleaf lights");
 
 
     let mainloop = MainLoop::new().unwrap();
