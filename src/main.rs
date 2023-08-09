@@ -45,7 +45,7 @@ async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient,
     let now: Instant = Instant::now();
 
     // Needs to be over a sliding window.
-    let mut window = SlidingWindow::new(512);
+    let mut window = SlidingWindow::new(64);
     loop { 
         let process_start = Instant::now();
         {
