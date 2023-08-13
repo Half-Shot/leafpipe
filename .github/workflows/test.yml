@@ -11,6 +11,11 @@ jobs:
             components: clippy
             default: true
             toolchain: stable
+      - name: Cache Rust Deps
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo
+          key: ${{ runner.os }}-rust
       - name: Run cargo check
         uses: actions-rs/cargo@v1
         with:
