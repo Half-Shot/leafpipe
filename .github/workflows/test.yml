@@ -4,7 +4,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt update && sudo apt install build-essential llvm clang libclang libspa-0.2-dev libpipewire-0.3-dev
+      - run: sudo apt update && sudo apt install build-essential llvm libclang-dev libspa-0.2-dev libpipewire-0.3-dev
       - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
