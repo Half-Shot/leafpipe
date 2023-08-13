@@ -4,7 +4,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt update && sudo apt install llvm-config
+      - run: sudo apt update && sudo apt install llvm
       - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
         with:
