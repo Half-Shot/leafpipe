@@ -138,8 +138,8 @@ pub struct FrameCapturer {
 
 
 pub fn setup_capture(
-    globals: &mut GlobalList,
-    conn: &mut Connection,
+    globals: &GlobalList,
+    conn: &Connection,
     output: &WlOutput,
 ) -> Result<FrameCapturer, Box<dyn Error>> {
     let mut state = CaptureFrameState {
@@ -204,8 +204,8 @@ pub fn setup_capture(
 
 /// Get a FrameCopy instance with screenshot pixel data for any wl_output object.
 pub fn capture_output_frame(
-    globals: &mut GlobalList,
-    conn: &mut Connection,
+    globals: &GlobalList,
+    conn: &Connection,
     output: &WlOutput,
     capturer: &mut FrameCapturer,
 ) -> Result<FrameCopy, Box<dyn Error>> {

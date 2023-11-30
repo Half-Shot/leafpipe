@@ -53,9 +53,7 @@ async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient,
 
             if let Some(data) = buffer_manager.write().unwrap().fft_interval::<10>(LIGHT_INTERVAL) {
                 let mut effect = NanoleafEffectPayload::new(panels.num_panels);
-                let mut panel_index: usize = 0;
-
-                for panel in &panels.position_data {
+                for (panel_index, panel) in panels.position_data.iter().enumerate() {
                     let (min, max) = window.submit_new(data[panel_index]);
                     let base_int = color.get_lightness() - 10.0;
                     let intensity = (base_int + ((data[panel_index] + min) / max) * 25f32 * (panel_index as f32 + 1.0f32).powf(1.05f32)).clamp(5.0, 80.0);
@@ -65,7 +63,6 @@ async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient,
                     let g = unsafe { rgb.1.to_int_unchecked::<u8>() };
                     let b = unsafe { rgb.2.to_int_unchecked::<u8>() };
                     effect.write_effect(panel.panel_id, r, g, b, 1);
-                    panel_index += 1;
                 }
                 if let Err(err) = nanoleaf.send_effect(&effect) {
                     println!("Failed to send effect to nanoleaf {:?}", err);
@@ -132,22 +129,22 @@ impl wayland_client::Dispatch<wl_registry::WlRegistry, GlobalListContents> for A
 
 
 fn configure_display(pause_duration:time::Duration, output_name: Option<String>) -> std::sync::mpsc::Receiver<Hsl> {
-    let mut conn = Connection::connect_to_env().unwrap();
-    let (mut globals, _) = registry_queue_init::<AppState>(&conn).unwrap();
+    let conn = Connection::connect_to_env().unwrap();
+    let (globals, _) = registry_queue_init::<AppState>(&conn).unwrap();
     let out: WlOutput = if let Some(output_name_result) = output_name {
         visual::output::get_wloutput(
             output_name_result.trim().to_string(),
-            visual::output::get_all_outputs(&mut globals, &mut conn),
+            visual::output::get_all_outputs(&globals, &conn),
         )
     } else {
-        visual::output::get_all_outputs(&mut globals, &mut conn)
+        visual::output::get_all_outputs(&globals, &conn)
             .first()
             .unwrap()
             .wl_output
             .clone()
     };
 
-    let mut capturer = backend::setup_capture(&mut globals,&mut conn, &out).unwrap();
+    let mut capturer = backend::setup_capture(&globals,&conn, &out).unwrap();
     let (tx, rx) = channel();
 
     thread::spawn(move|| {
@@ -156,8 +153,8 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
         let mut heatmap = vec![vec![vec![0u32; 21]; 21]; 37];
         loop {
             let frame_copy = backend::capture_output_frame(
-                &mut globals,
-                &mut conn,
+                &globals,
+                &conn,
                 &out,
                 &mut capturer,
             ).unwrap();

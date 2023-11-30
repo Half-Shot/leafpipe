@@ -24,7 +24,7 @@ const SATURATION_MIN: f32 = 10.0;
 const SKIP_PIXEL: usize = 8;
 
 
-pub fn determine_prominent_color(frame_copy: FrameCopy, heatmap: &mut Vec<Vec<Vec<u32>>>) -> Hsl {
+pub fn determine_prominent_color(frame_copy: FrameCopy, heatmap: &mut [Vec<Vec<u32>>]) -> Hsl {
     if ColorType::Rgba8 != frame_copy.frame_color_type {
         panic!("Cannot handle frame!")
     };

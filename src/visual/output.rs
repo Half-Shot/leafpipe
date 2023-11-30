@@ -113,7 +113,7 @@ struct OutputCaptureState {
     outputs: Vec<OutputInfo>,
 }
 
-pub fn get_all_outputs(globals: &mut GlobalList, conn: &mut Connection) -> Vec<OutputInfo> {
+pub fn get_all_outputs(globals: &GlobalList, conn: &Connection) -> Vec<OutputInfo> {
     // Connecting to wayland environment.
     let mut state = OutputCaptureState {
         outputs: Vec::new(),
