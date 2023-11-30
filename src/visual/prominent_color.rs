@@ -66,22 +66,17 @@ mod test {
     use colors_transform::Color;
     use image::ColorType;
     use test::Bencher;
-    use std::fs::File;
 
     use crate::{visual::prominent_color::determine_prominent_color, backend::FrameCopy};
     
     #[test]
     fn test_determine_prominent_color() {
-        let decoder = png::Decoder::new(File::open("samples/gradientrb.png").unwrap());
-        let mut reader = decoder.read_info().unwrap();// Allocate the output buffer.
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-        let bytes = &buf[..info.buffer_size()];
-        let mut heatmap = vec![vec![vec![0u32; 21]; 21]; 37];
+        let image = image::open("samples/gradientrb.png").unwrap();
+        let mut heatmap: Vec<Vec<Vec<u32>>> = vec![vec![vec![0u32; 21]; 21]; 37];
     
         let v = determine_prominent_color( FrameCopy {
             frame_color_type: ColorType::Rgba8,
-            data: bytes.to_vec(),
+            data: image.clone().into_bytes(),
         }, &mut heatmap);
     
         assert_eq!(v.get_hue(), 240.0, "Hue value is incorrect");
@@ -91,31 +86,23 @@ mod test {
 
     #[bench]
     fn bench_determine_prominent_color_gradient(b: &mut Bencher) {
-        let decoder = png::Decoder::new(File::open("samples/gradientrb.png").unwrap());
-        let mut reader = decoder.read_info().unwrap();// Allocate the output buffer.
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-        let bytes = &buf[..info.buffer_size()];
+        let image = image::open("samples/gradientrb.png").unwrap();
         let mut heatmap = vec![vec![vec![0u32; 21]; 21]; 37];
 
         b.iter(|| determine_prominent_color( FrameCopy {
             frame_color_type: ColorType::Rgba8,
-            data: bytes.to_vec(),
+            data: image.clone().into_bytes(),
         },&mut heatmap));
     }
 
     #[bench]
     fn bench_determine_prominent_color_testcard(b: &mut Bencher) {
-        let decoder = png::Decoder::new(File::open("samples/testcard.png").unwrap());
-        let mut reader = decoder.read_info().unwrap();// Allocate the output buffer.
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut buf).unwrap();
-        let bytes = &buf[..info.buffer_size()];
+        let image = image::open("samples/testcard.png").unwrap();
         let mut heatmap = vec![vec![vec![0u32; 21]; 21]; 37];
 
         b.iter(|| determine_prominent_color( FrameCopy {
             frame_color_type: ColorType::Rgba8,
-            data: bytes.to_vec(),
+            data: image.clone().into_bytes(),
         },&mut heatmap));
     }
 }

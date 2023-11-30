@@ -2,8 +2,7 @@ use std::{
     error::Error,
     ffi::CStr,
     fs::File,
-    os::unix::prelude::FromRawFd,
-    os::unix::prelude::RawFd,
+    os::{unix::prelude::FromRawFd, fd::{OwnedFd, AsRawFd, AsFd}},
     process::exit,
     sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH}, io::{Read, Seek},
@@ -11,7 +10,7 @@ use std::{
 
 use nix::{
     fcntl,
-    sys::{memfd, mman, stat},
+    sys::{mman, stat, memfd},
     unistd,
 };
 
@@ -179,12 +178,13 @@ pub fn setup_capture(
 
     // Create an in memory file and return it's file descriptor.
     let mem_fd = create_shm_fd()?;
-    let mem_file = unsafe { File::from_raw_fd(mem_fd) };
+    let mem_file = unsafe { File::from_raw_fd(mem_fd.as_raw_fd()) };
     mem_file.set_len(frame_bytes as u64)?;
+
 
     // Instantiate shm global.
     let shm = globals.bind::<WlShm, _, _>(&qh, 1..=1, ()).unwrap();
-    let shm_pool = shm.create_pool(mem_fd, frame_bytes as i32, &qh, ());
+    let shm_pool = shm.create_pool(mem_fd.as_fd(), frame_bytes as i32, &qh, ());
     let buffer = shm_pool.create_buffer(
         0,
         frame_format.width as i32,
@@ -280,7 +280,7 @@ pub fn capture_output_frame(
 /// Return a RawFd to a shm file. We use memfd create on linux and shm_open for BSD support.
 /// You don't need to mess around with this function, it is only used by
 /// capture_output_frame.
-fn create_shm_fd() -> std::io::Result<RawFd> {
+fn create_shm_fd() -> std::io::Result<OwnedFd> {
     // Only try memfd on linux and freebsd.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     loop {
@@ -294,7 +294,7 @@ fn create_shm_fd() -> std::io::Result<RawFd> {
                 // F_SEAL_SRHINK = File cannot be reduced in size.
                 // F_SEAL_SEAL = Prevent further calls to fcntl().
                 let _ = fcntl::fcntl(
-                    fd,
+                    fd.as_raw_fd(),
                     fcntl::F_ADD_SEALS(
                         fcntl::SealFlag::F_SEAL_SHRINK | fcntl::SealFlag::F_SEAL_SEAL,
                     ),
@@ -330,7 +330,7 @@ fn create_shm_fd() -> std::io::Result<RawFd> {
         ) {
             Ok(fd) => match mman::shm_unlink(mem_file_handle.as_str()) {
                 Ok(_) => return Ok(fd),
-                Err(errno) => match unistd::close(fd) {
+                Err(errno) => match unistd::close(fd.as_raw_fd()) {
                     Ok(_) => return Err(std::io::Error::from(errno)),
                     Err(errno) => return Err(std::io::Error::from(errno)),
                 },
