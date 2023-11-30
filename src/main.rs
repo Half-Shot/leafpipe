@@ -170,7 +170,7 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
             thread::sleep(pause_duration);
         }
     });
-    return rx;
+    rx
 }
 
 fn configure_pipewire(core: &Core, buffer_manager: Arc<RwLock<BufferManager>>) -> Result<Stream, pipewire::Error>  {
@@ -230,7 +230,7 @@ fn configure_pipewire(core: &Core, buffer_manager: Arc<RwLock<BufferManager>>) -
             }
 		}
     }).register()?;
-    return Ok(stream);
+    Ok(stream)
 }
 
 #[tokio::main]
