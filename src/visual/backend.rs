@@ -2,8 +2,7 @@ use std::{
     error::Error,
     ffi::CStr,
     fs::File,
-    os::{unix::prelude::FromRawFd, fd::{OwnedFd, AsRawFd, AsFd}},
-    process::exit,
+    os::fd::{OwnedFd, AsRawFd, AsFd},
     sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH}, io::{Read, Seek},
 };
@@ -63,8 +62,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
                         stride,
                     })
                 } else {
-                    log::debug!("Received Buffer event with unidentified format");
-                    exit(1);
+                    log::warn!("Received Buffer event with unidentified format");
                 }
             }
             zwlr_screencopy_frame_v1::Event::Flags { .. } => {
@@ -245,7 +243,6 @@ pub fn capture_output_frame(
             match state {
                 FrameState::Failed => {
                     log::error!("Frame copy failed");
-                    exit(1);
                 }
                 FrameState::Finished => {
                     // Create a writeable memory map backed by a mem_file.
@@ -262,8 +259,7 @@ pub fn capture_output_frame(
                         }
                         wl_shm::Format::Xbgr8888 => ColorType::Rgba8,
                         unsupported_format => {
-                            log::error!("Unsupported buffer format: {:?}", unsupported_format);
-                            exit(1);
+                            panic!("Unsupported buffer format: {:?}", unsupported_format);
                         }
                     };
                     return Ok(FrameCopy {
