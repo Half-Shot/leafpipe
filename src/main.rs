@@ -96,7 +96,8 @@ fn discover_host(config: &Config) -> (String, u16) {
                 match event {
                     ServiceEvent::ServiceResolved(info) => {
                         println!("Discovered service {} {:?}", info.get_fullname(), info.get_addresses());
-                        let service_ip = info.get_addresses().iter().next().expect("Service found but with no addresses").to_string();
+                        // TODO: Support IPv6. My system doesn't :(
+                        let service_ip = info.get_addresses().iter().find(|addr| addr.is_ipv4()).expect("Service found but with no addresses").to_string();
                         return (service_ip, info.get_port());
                     }
                     _ => {
@@ -170,22 +171,32 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
     rx
 }
 
-fn configure_pipewire(core: &Core, buffer_manager: Arc<RwLock<BufferManager>>) -> Result<Stream, pipewire::Error>  {
+fn configure_pipewire(buffer_manager: Arc<RwLock<BufferManager>>) -> Result<(MainLoop, Core, Stream), pipewire::Error>  {
+    pipewire::init();
+    let mainloop = MainLoop::new()?;
+    let context = Context::new(&mainloop)?;
+    let core = context.connect(None)?;
+
+    let props = properties! {
+        *pipewire::keys::MEDIA_TYPE => "Audio",
+        *pipewire::keys::MEDIA_CATEGORY => "Capture",
+        *pipewire::keys::MEDIA_ROLE => "Music",
+        *pipewire::keys::STREAM_CAPTURE_SINK => "true",
+    };
+
     let stream = Stream::new(
-        core,
-        "audio-cap",
-        properties! {
-            *pipewire::keys::MEDIA_TYPE => "Audio",
-            *pipewire::keys::MEDIA_CATEGORY => "Capture",
-            *pipewire::keys::MEDIA_ROLE => "Music",
-        }
+        &core,
+        "audio-capture",
+        props,
     )?;
 
-    stream.add_local_listener_with_user_data(
-        StreamData {
-            configuration: AudioInfoRaw::new(),
-            buffer_manager,
-        }
+    let user_data = StreamData {
+        configuration: Default::default(),
+        buffer_manager,
+    };
+
+    let _listener = stream.add_local_listener_with_user_data(
+        user_data
     )
 	.param_changed(|_, id, data, param| {
         let Some(param) = param else {
@@ -200,14 +211,13 @@ fn configure_pipewire(core: &Core, buffer_manager: Arc<RwLock<BufferManager>>) -
             Ok(v) => v,
             Err(_) => return,
         };
-
         if media_type != MediaType::Audio 
         || media_subtype != MediaSubtype::Raw
         {
             return;
         }
-
         data.configuration.parse(param).expect("Expected to be able to parse audio!");
+        println!("Found configuration {:?}", data.configuration);
 	})
     .process(|_stream, stream_data| {
 		if let Some(mut buffer) = _stream.dequeue_buffer() {
@@ -218,7 +228,6 @@ fn configure_pipewire(core: &Core, buffer_manager: Arc<RwLock<BufferManager>>) -
                 let size = chunk.size() as usize;
                 let data = channel.data(); 
                 if let Some(data) = data {
-    
                     let cast_buffer: &[f32] = unsafe {
                         std::slice::from_raw_parts(data.as_ptr().cast(), size / std::mem::size_of::<f32>())
                     };
@@ -227,43 +236,6 @@ fn configure_pipewire(core: &Core, buffer_manager: Arc<RwLock<BufferManager>>) -
             }
 		}
     }).register()?;
-    Ok(stream)
-}
-
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP"));
-    
-    let config = if let Some(config_file) = xdg::BaseDirectories::with_prefix("leafpipe").unwrap().find_config_file("config.toml") {
-        config_builder.add_source(config::File::from(config_file)).build().unwrap()
-    } else {
-        config_builder.add_source(config::File::with_name("config.toml")).build().unwrap()
-    };
-
-    env_logger::init();
-    log::trace!("Logger initialized.");
-
-    let service = discover_host(&config);
-    println!("Discovered nanoleaf on {}:{}", service.0, service.1);
-
-
-    let nanoleaf: NanoleafClient = NanoleafClient::connect(
-        config.get_string("nanoleaf_token").expect("Missing nanoleaf_token config"),
-        service.0,
-        service.1,
-    ).await.unwrap();
-
-    // Check we can contact the nanoleaf
-    nanoleaf.get_panels().await.expect("Could not contact nanoleaf lights");
-
-
-    let mainloop = MainLoop::new().unwrap();
-    let context = Context::new(&mainloop).unwrap();
-    let core = context.connect(None).unwrap();
-    let buffer_manager: Arc<RwLock<BufferManager>> = Arc::new(RwLock::new(BufferManager::default()));
-    let buffer_manager_lights = buffer_manager.clone();
-
-    let stream = configure_pipewire(&core, buffer_manager).expect("Could not configure pipewire");
 
     let mut audio_info = spa::param::audio::AudioInfoRaw::new();
     audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
@@ -280,20 +252,59 @@ async fn main() -> std::io::Result<()> {
     .0
     .into_inner();
 
+    println!("vals: {:?}", values);
+
     let mut params = [Pod::from_bytes(&values).unwrap()];
 	stream.connect(
 		Direction::Input,
 		None,
-		StreamFlags::AUTOCONNECT | StreamFlags::RT_PROCESS | StreamFlags::MAP_BUFFERS,
+		StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
 		&mut params,
-	).unwrap();
+	)?;
+    mainloop.run();
+    Ok((mainloop, core, stream))
+}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+
+    let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP"));
+    
+    let config = if let Some(config_file) = xdg::BaseDirectories::with_prefix("leafpipe").unwrap().find_config_file("config.toml") {
+        config_builder.add_source(config::File::from(config_file)).build().unwrap()
+    } else {
+        config_builder.add_source(config::File::with_name("config.toml")).build().unwrap()
+    };
+
+    env_logger::init();
+    log::set_max_level(log::LevelFilter::Trace);
+    log::trace!("Logger initialized.");
+
+
+    let buffer_manager: Arc<RwLock<BufferManager>> = Arc::new(RwLock::new(BufferManager::default()));
+    let buffer_manager_lights = buffer_manager.clone();
+
+
+    let service = discover_host(&config);
+    println!("Discovered nanoleaf on {}:{}", service.0, service.1);
+
+    let nanoleaf: NanoleafClient = NanoleafClient::connect(
+        config.get_string("nanoleaf_token").expect("Missing nanoleaf_token config"),
+        service.0,
+        service.1,
+    ).await.unwrap();
+
+    // Check we can contact the nanoleaf
+    nanoleaf.get_panels().await.expect("Could not contact nanoleaf lights");
 
     let panels: nanoleaf::NanoleafLayoutResponse = nanoleaf.get_panels().await.unwrap();
     let color_rx = configure_display(Duration::from_millis(33), Some(String::from("DP-1")));
 
     tokio::spawn(async move { update_lights(panels, nanoleaf, buffer_manager_lights, color_rx).await });
+    println!("Got pipewire register");
+    let (_mainloop, _core, stream) = configure_pipewire(buffer_manager).expect("Could not configure pipewire");
+    println!("Got pipewire register");
 
-    mainloop.run();
     stream.disconnect().unwrap();
     Ok(())
 }

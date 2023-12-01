@@ -178,13 +178,13 @@ pub fn setup_capture(
 
     // Create an in memory file and return it's file descriptor.
     let mem_fd = create_shm_fd()?;
-    let mem_file = unsafe { File::from_raw_fd(mem_fd.as_raw_fd()) };
+    let mem_file = File::from(mem_fd);
     mem_file.set_len(frame_bytes as u64)?;
 
 
     // Instantiate shm global.
     let shm = globals.bind::<WlShm, _, _>(&qh, 1..=1, ()).unwrap();
-    let shm_pool = shm.create_pool(mem_fd.as_fd(), frame_bytes as i32, &qh, ());
+    let shm_pool = shm.create_pool(mem_file.as_fd(), frame_bytes as i32, &qh, ());
     let buffer = shm_pool.create_buffer(
         0,
         frame_format.width as i32,
@@ -249,7 +249,7 @@ pub fn capture_output_frame(
                 }
                 FrameState::Finished => {
                     // Create a writeable memory map backed by a mem_file.
-                    let mut data = vec![];
+                    let mut data: Vec<u8> = vec![];
                     capturer.mem_file.read_to_end(&mut data).unwrap(); // unsafe { MmapMut::map_mut(&capturer.mem_file)? };
                     capturer.mem_file.rewind().unwrap();
                     let frame_color_type = match capturer.frame_format.format {
