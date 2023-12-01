@@ -164,7 +164,7 @@ pub fn setup_capture(
     }
 
     // TODO, better error handling
-    let frame_format = *state.formats.get(0).unwrap();
+    let frame_format = *state.formats.first().unwrap();
 
     log::debug!(
         "Received compositor frame buffer format: {:#?}",
