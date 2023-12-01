@@ -3,14 +3,6 @@ extern crate test;
 
 use colors_transform::{Color, Hsl};
 use nanoleaf::{NanoleafClient, NanoleafEffectPayload, NanoleafLayoutResponse};
-use pipewire::spa::format::{MediaType, MediaSubtype};
-use pipewire::spa::param::audio::AudioInfoRaw;
-use pipewire::spa::pod::Pod;
-use pipewire::{MainLoop, Context, Core, spa};
-use pipewire::properties;
-use pipewire::spa::Direction;
-use pipewire::stream::StreamFlags;
-use pipewire::stream::Stream;
 use visual::backend;
 use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::{Connection, QueueHandle};
@@ -32,12 +24,7 @@ mod slidingwindow;
 mod vis;
 mod nanoleaf;
 mod visual;
-
-#[derive(Default)]
-struct StreamData {
-	configuration: AudioInfoRaw,
-    buffer_manager: Arc<RwLock<BufferManager>>,
-}
+mod pipewire;
 
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
 const MDNS_TIMEOUT: Duration = Duration::from_secs(30);
@@ -59,9 +46,9 @@ async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient,
                     let intensity = (base_int + ((data[panel_index] + min) / max) * 25f32 * (panel_index as f32 + 1.0f32).powf(1.05f32)).clamp(5.0, 80.0);
                     let hsl = Hsl::from(color.get_hue(), color.get_saturation(), intensity);
                     let rgb = hsl.to_rgb().as_tuple();
-                    let r = unsafe { rgb.0.to_int_unchecked::<u8>() };
-                    let g = unsafe { rgb.1.to_int_unchecked::<u8>() };
-                    let b = unsafe { rgb.2.to_int_unchecked::<u8>() };
+                    let r = rgb.0.round() as u8;
+                    let g = rgb.1.round() as u8;
+                    let b = rgb.2.round() as u8;
                     effect.write_effect(panel.panel_id, r, g, b, 1);
                 }
                 if let Err(err) = nanoleaf.send_effect(&effect) {
@@ -171,105 +158,10 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
     rx
 }
 
-fn configure_pipewire(buffer_manager: Arc<RwLock<BufferManager>>) -> Result<(MainLoop, Core, Stream), pipewire::Error>  {
-    pipewire::init();
-    let mainloop = MainLoop::new()?;
-    let context = Context::new(&mainloop)?;
-    let core = context.connect(None)?;
-
-    let props = properties! {
-        *pipewire::keys::MEDIA_TYPE => "Audio",
-        *pipewire::keys::MEDIA_CATEGORY => "Capture",
-        *pipewire::keys::MEDIA_ROLE => "Music",
-        *pipewire::keys::STREAM_CAPTURE_SINK => "true",
-    };
-
-    let stream = Stream::new(
-        &core,
-        "audio-capture",
-        props,
-    )?;
-
-    let user_data = StreamData {
-        configuration: Default::default(),
-        buffer_manager,
-    };
-
-    let _listener = stream.add_local_listener_with_user_data(
-        user_data
-    )
-	.param_changed(|_, id, data, param| {
-        let Some(param) = param else {
-            return;
-        };
-        if id != pipewire::spa::param::ParamType::Format.as_raw() {
-            return;
-        }
-
-        let (media_type, media_subtype) =
-        match pipewire::spa::param::format_utils::parse_format(param) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        if media_type != MediaType::Audio 
-        || media_subtype != MediaSubtype::Raw
-        {
-            return;
-        }
-        data.configuration.parse(param).expect("Expected to be able to parse audio!");
-        println!("Found configuration {:?}", data.configuration);
-	})
-    .process(|_stream, stream_data| {
-		if let Some(mut buffer) = _stream.dequeue_buffer() {
-            let channels = stream_data.configuration.channels() as usize;
-            for channel_index in 0..channels-1 {
-                let channel = buffer.datas_mut().get_mut(channel_index).unwrap();
-                let chunk = channel.chunk(); 
-                let size = chunk.size() as usize;
-                let data = channel.data(); 
-                if let Some(data) = data {
-                    let cast_buffer: &[f32] = unsafe {
-                        std::slice::from_raw_parts(data.as_ptr().cast(), size / std::mem::size_of::<f32>())
-                    };
-                    stream_data.buffer_manager.write().unwrap().fill_buffer(cast_buffer, stream_data.configuration.rate());
-                }
-            }
-		}
-    }).register()?;
-
-    let mut audio_info = spa::param::audio::AudioInfoRaw::new();
-    audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
-    let obj = spa::pod::Object {
-        type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
-        id: spa::param::ParamType::EnumFormat.as_raw(),
-        properties: audio_info.into(),
-    };
-    let values: Vec<u8> = spa::pod::serialize::PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(obj),
-    )
-    .unwrap()
-    .0
-    .into_inner();
-
-    println!("vals: {:?}", values);
-
-    let mut params = [Pod::from_bytes(&values).unwrap()];
-	stream.connect(
-		Direction::Input,
-		None,
-		StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
-		&mut params,
-	)?;
-    mainloop.run();
-    Ok((mainloop, core, stream))
-}
-
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-
     let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP"));
-    
+
     let config = if let Some(config_file) = xdg::BaseDirectories::with_prefix("leafpipe").unwrap().find_config_file("config.toml") {
         config_builder.add_source(config::File::from(config_file)).build().unwrap()
     } else {
@@ -280,10 +172,10 @@ async fn main() -> std::io::Result<()> {
     log::set_max_level(log::LevelFilter::Trace);
     log::trace!("Logger initialized.");
 
-
     let buffer_manager: Arc<RwLock<BufferManager>> = Arc::new(RwLock::new(BufferManager::default()));
     let buffer_manager_lights = buffer_manager.clone();
 
+    let pipewire = crate::pipewire::PipewireContainer::new(buffer_manager).expect("Could not configure pipewire");
 
     let service = discover_host(&config);
     println!("Discovered nanoleaf on {}:{}", service.0, service.1);
@@ -301,11 +193,8 @@ async fn main() -> std::io::Result<()> {
     let color_rx = configure_display(Duration::from_millis(33), Some(String::from("DP-1")));
 
     tokio::spawn(async move { update_lights(panels, nanoleaf, buffer_manager_lights, color_rx).await });
-    println!("Got pipewire register");
-    let (_mainloop, _core, stream) = configure_pipewire(buffer_manager).expect("Could not configure pipewire");
-    println!("Got pipewire register");
-
-    stream.disconnect().unwrap();
+    pipewire.run();
+    pipewire.stop().expect("Failed to stop pipewire");
     Ok(())
 }
 

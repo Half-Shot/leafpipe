@@ -247,7 +247,7 @@ pub fn capture_output_frame(
                 FrameState::Finished => {
                     // Create a writeable memory map backed by a mem_file.
                     let mut data: Vec<u8> = vec![];
-                    capturer.mem_file.read_to_end(&mut data).unwrap(); // unsafe { MmapMut::map_mut(&capturer.mem_file)? };
+                    capturer.mem_file.read_to_end(&mut data).unwrap();
                     capturer.mem_file.rewind().unwrap();
                     let frame_color_type = match capturer.frame_format.format {
                         wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888 => {
