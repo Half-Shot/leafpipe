@@ -43,7 +43,7 @@ fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffe
         } else if v < -1 {
             return Ordering::Less;
         }
-        return Ordering::Equal;
+        Ordering::Equal
     });
     loop { 
         let process_start = Instant::now();

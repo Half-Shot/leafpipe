@@ -87,7 +87,7 @@ mod test {
             frame_color_type: ColorType::Rgba8,
             data: image.clone().into_bytes(),
         }, &mut heatmap);
-        let v = result.get(0).unwrap();
+        let v = result.first().unwrap();
     
         assert_eq!(v.get_hue(), 240.0, "Hue value is incorrect");
         assert_eq!(v.get_saturation(), 85.0, "Saturation value is incorrect");
@@ -105,7 +105,7 @@ mod test {
             frame_color_type: ColorType::Rgba8,
             data: image.clone().into_bytes(),
         }, &mut heatmap);
-        let v1 = result.get(0).unwrap();
+        let v1 = result.first().unwrap();
         let v2 = result.get(1).unwrap();
         let v3 = result.get(2).unwrap();
         let v4 = result.get(2).unwrap();

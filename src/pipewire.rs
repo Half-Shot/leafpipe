@@ -122,12 +122,12 @@ impl PipewireContainer {
         })
     }
 
-    pub fn run(self: &Self) {
+    pub fn run(&self) {
         // TODO: Port to async
         self.mainloop.run()
     }
 
-    pub fn stop(self: &Self) -> Result<(), pipewire::Error> {
+    pub fn stop(&self) -> Result<(), pipewire::Error> {
         self.stream.disconnect()
     }
 }
