@@ -123,6 +123,8 @@ enum FrameState {
 /// file that holds the image data in it.
 #[derive(Debug)]
 pub struct FrameCopy {
+    pub width: u32,
+    pub height: u32,
     pub frame_color_type: ColorType,
     pub data: Vec<u8>,
 }
@@ -263,6 +265,8 @@ pub fn capture_output_frame(
                         }
                     };
                     return Ok(FrameCopy {
+                        width: capturer.frame_format.width,
+                        height: capturer.frame_format.height,
                         frame_color_type,
                         data,
                     });

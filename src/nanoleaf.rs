@@ -18,7 +18,7 @@ struct NanoleafEffectsResponse {
     select: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NanoleafLayoutPanelData {
     pub panel_id: u16,

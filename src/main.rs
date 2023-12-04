@@ -1,6 +1,7 @@
 #![feature(test)]
 extern crate test;
 
+use clap::Parser;
 use colors_transform::{Color, Hsl};
 use nanoleaf::{NanoleafClient, NanoleafEffectPayload, NanoleafLayoutResponse};
 use visual::backend;
@@ -9,6 +10,7 @@ use wayland_client::{Connection, QueueHandle};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_registry;
 use core::panic;
+use std::cmp::Ordering;
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, RwLock};
@@ -25,31 +27,74 @@ mod vis;
 mod nanoleaf;
 mod visual;
 mod pipewire;
+mod cli;
 
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
 const MDNS_TIMEOUT: Duration = Duration::from_secs(30);
 
-async fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Hsl>) {
+
+// pub fn set_flags() -> Command {
+//     let app = Command::new("leafpipe")
+//         .version(env!("CARGO_PKG_VERSION"))
+//         .author(env!("CARGO_PKG_AUTHORS"))
+//         .about("Match RGB iot lighting with wayland compositor output.")
+//         .arg(
+//             arg!(-d - -debug)
+//                 .required(false)
+//                 .help("Enable debug mode"),
+//         )
+//         .arg(
+//             arg!(-l - -listoutputs)
+//                 .required(false)
+//                 .help("List all valid outputs"),
+//         )
+//         .arg(
+//             arg!(-o --output <OUTPUT>)
+//                 .required(false)
+//                 .help("Choose a particular output to use"),
+//         )
+//         .arg(
+//             arg!(-i --intensity <intensity>)
+//                 .default_value(15.0f32)
+//                 .help("Choose a particular output to use"),
+//         );
+//     app
+// }
+
+
+fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Vec<Hsl>>, intensity: f32) {
     // Needs to be over a sliding window.
     let mut window = SlidingWindow::new(64);
-    let mut color = Hsl::new();
+    let mut color_set = Vec::new();
+    let mut sorted_panels = panels.position_data.to_vec();
+    sorted_panels.sort_by(|a,b| {
+        let v = a.x as i32 - b.x as i32;
+        if v > 1 {
+            return Ordering::Greater;
+        } else if v < -1 {
+            return Ordering::Less;
+        }
+        return Ordering::Equal;
+    });
     loop { 
         let process_start = Instant::now();
         {
-            color = color_channel.recv_timeout(Duration::from_millis(30)).unwrap_or( color);
+            color_set = color_channel.recv_timeout(Duration::from_millis(30)).unwrap_or( color_set);
 
             if let Some(data) = buffer_manager.write().unwrap().fft_interval::<10>(LIGHT_INTERVAL) {
                 let mut effect = NanoleafEffectPayload::new(panels.num_panels);
-                for (panel_index, panel) in panels.position_data.iter().enumerate() {
-                    let (min, max) = window.submit_new(data[panel_index]);
-                    let base_int = color.get_lightness() - 10.0;
-                    let intensity = (base_int + ((data[panel_index] + min) / max) * 25f32 * (panel_index as f32 + 1.0f32).powf(1.05f32)).clamp(5.0, 80.0);
-                    let hsl = Hsl::from(color.get_hue(), color.get_saturation(), intensity);
-                    let rgb = hsl.to_rgb().as_tuple();
-                    let r = rgb.0.round() as u8;
-                    let g = rgb.1.round() as u8;
-                    let b = rgb.2.round() as u8;
-                    effect.write_effect(panel.panel_id, r, g, b, 1);
+                for (panel_index, panel) in sorted_panels.iter().enumerate() {
+                    if let Some(color) = color_set.get(panel_index) {
+                        let (min, max) = window.submit_new(data[panel_index]);
+                        let base_int = color.get_lightness() - 10.0;
+                        let intensity = (base_int + ((data[panel_index] + min) / max) * intensity * (panel_index as f32 + 1.0f32).powf(1.05f32)).clamp(5.0, 80.0);
+                        let hsl = Hsl::from(color.get_hue(), color.get_saturation(), intensity);
+                        let rgb = hsl.to_rgb().as_tuple();
+                        let r = rgb.0.round() as u8;
+                        let g = rgb.1.round() as u8;
+                        let b = rgb.2.round() as u8;
+                        effect.write_effect(panel.panel_id, r, g, b, 1);
+                    }
                 }
                 if let Err(err) = nanoleaf.send_effect(&effect) {
                     println!("Failed to send effect to nanoleaf {:?}", err);
@@ -116,7 +161,7 @@ impl wayland_client::Dispatch<wl_registry::WlRegistry, GlobalListContents> for A
 }
 
 
-fn configure_display(pause_duration:time::Duration, output_name: Option<String>) -> std::sync::mpsc::Receiver<Hsl> {
+fn configure_display(pause_duration:time::Duration, panel_count: usize, output_name: Option<String>) -> std::sync::mpsc::Receiver<Vec<Hsl>> {
     let conn = Connection::connect_to_env().unwrap();
     let (globals, _) = registry_queue_init::<AppState>(&conn).unwrap();
     let out: WlOutput = if let Some(output_name_result) = output_name {
@@ -137,8 +182,8 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
 
     thread::spawn(move|| {
         log::info!("Capturing frames");
-        let mut last_value = Hsl::from(0.0,0.0,0.0);
-        let mut heatmap = vec![vec![vec![0u32; 21]; 21]; 37];
+        let mut last_value = 0.0f32;
+        let mut heatmap = vec![vec![vec![vec![0u32; 21]; 21]; 37]; panel_count];
         loop {
             let frame_copy = backend::capture_output_frame(
                 &globals,
@@ -147,10 +192,11 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
                 &mut capturer,
             ).unwrap();
             let hsl = visual::prominent_color::determine_prominent_color(frame_copy, &mut heatmap);
-            if !last_value.eq(&hsl) {
+            let value_hash: f32 = hsl.iter().map(|f| f.get_hue() + f.get_lightness() + f.get_saturation()).sum();
+            if value_hash != last_value {
                 log::info!("Sending new hsl {:?}", hsl);
                 tx.send(hsl).unwrap();
-                last_value = hsl;
+                last_value = value_hash;
             }
             thread::sleep(pause_duration);
         }
@@ -160,6 +206,8 @@ fn configure_display(pause_duration:time::Duration, output_name: Option<String>)
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let args = cli::CliArgs::parse();
+
     let config_builder = Config::builder().add_source(config::Environment::with_prefix("LP"));
 
     let config = if let Some(config_file) = xdg::BaseDirectories::with_prefix("leafpipe").unwrap().find_config_file("config.toml") {
@@ -169,7 +217,9 @@ async fn main() -> std::io::Result<()> {
     };
 
     env_logger::init();
-    log::set_max_level(log::LevelFilter::Trace);
+    // if flags.get_flag("debug") {
+    //     log::set_max_level(log::LevelFilter::Trace);
+    // }
     log::trace!("Logger initialized.");
 
     let buffer_manager: Arc<RwLock<BufferManager>> = Arc::new(RwLock::new(BufferManager::default()));
@@ -190,9 +240,9 @@ async fn main() -> std::io::Result<()> {
     nanoleaf.get_panels().await.expect("Could not contact nanoleaf lights");
 
     let panels: nanoleaf::NanoleafLayoutResponse = nanoleaf.get_panels().await.unwrap();
-    let color_rx = configure_display(Duration::from_millis(33), Some(String::from("DP-1")));
+    let color_rx = configure_display(Duration::from_millis(33), panels.num_panels, args.display);
 
-    tokio::spawn(async move { update_lights(panels, nanoleaf, buffer_manager_lights, color_rx).await });
+    tokio::spawn(async move { update_lights(panels, nanoleaf, buffer_manager_lights, color_rx, args.intensity) });
     pipewire.run();
     pipewire.stop().expect("Failed to stop pipewire");
     Ok(())
