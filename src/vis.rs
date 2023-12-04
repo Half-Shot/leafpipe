@@ -156,8 +156,7 @@ impl BufferManager {
 				
 				log_scale * SCALE
 			})
-			.collect::<Box<_>>()
-			.try_into().unwrap())
+			.collect::<Box<_>>())
 	}
 
 	pub fn fill_buffer(&mut self, buffer: &[f32], rate: u32) {
