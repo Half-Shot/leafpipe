@@ -35,7 +35,7 @@ const SERVICE_TYPE: &str = "_nanoleafapi._tcp.local.";
 fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Vec<Hsl>>, intensity: f32) {
     // Needs to be over a sliding window.
     let mut window = SlidingWindow::new(64);
-    let mut color_set = Vec::new();
+    let mut color_set: Vec<Hsl> = Vec::new();
     let mut sorted_panels = panels.position_data.to_vec();
     sorted_panels.sort_by(|a,b| {
         let v = a.x as i32 - b.x as i32;
@@ -49,9 +49,11 @@ fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffe
     loop { 
         let process_start = Instant::now();
         {
-            color_set = color_channel.recv_timeout(Duration::from_millis(30)).unwrap_or( color_set);
+            if let Ok(v) = color_channel.try_recv() {
+                color_set = v;
+            }
 
-            if let Some(data) = buffer_manager.write().unwrap().fft_interval::<10>(LIGHT_INTERVAL) {
+            if let Some(data) = buffer_manager.write().unwrap().fft_interval(LIGHT_INTERVAL, panels.num_panels) {
                 let mut effect = NanoleafEffectPayload::new(panels.num_panels);
                 for (panel_index, panel) in sorted_panels.iter().enumerate() {
                     if let Some(color) = color_set.get(panel_index) {
@@ -74,7 +76,7 @@ fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffe
         if LIGHT_INTERVAL.ge(&process_start.elapsed()) {
             let sleep_duration = LIGHT_INTERVAL.sub(process_start.elapsed());
             if sleep_duration.ge(&Duration::ZERO) {
-                thread::sleep(LIGHT_INTERVAL);
+                thread::sleep(sleep_duration);
             }
         }
     }
@@ -158,6 +160,7 @@ fn configure_display(pause_duration:time::Duration, panel_count: usize, output_n
         let mut last_value = 0.0f32;
         let mut heatmap = vec![vec![vec![vec![0u32; 21]; 21]; 37]; panel_count];
         loop {
+            let start = Instant::now();
             let frame_copy = backend::capture_output_frame(
                 &globals,
                 &conn,
@@ -167,11 +170,16 @@ fn configure_display(pause_duration:time::Duration, panel_count: usize, output_n
             let hsl = visual::prominent_color::determine_prominent_color(frame_copy, &mut heatmap);
             let value_hash: f32 = hsl.iter().map(|f| f.get_hue() + f.get_lightness() + f.get_saturation()).sum();
             if value_hash != last_value {
-                log::debug!("Sending new hsl {:?}", hsl);
                 tx.send(hsl).unwrap();
                 last_value = value_hash;
             }
-            thread::sleep(pause_duration);
+            if pause_duration.ge(&start.elapsed()) {
+                let sleep_duration = LIGHT_INTERVAL.sub(start.elapsed());
+                if sleep_duration.ge(&Duration::ZERO) {
+                    thread::sleep(sleep_duration);
+                }
+            }
+    
         }
     });
     rx

@@ -90,10 +90,11 @@ impl BufferManager {
 
 	// TODO: would be nice to have constant_q and/or variable_q intervals
 
-	pub fn fft_interval<const T: usize>(
+	pub fn fft_interval(
 		&mut self,
 		interval: Duration,
-	) -> Option<Box<[f32; T]>> {
+		out_size: usize,
+	) -> Option<Box<[f32]>> {
 		let BufferSlice { values, rate } = self.take_next(interval);
 
 		if values.len() < 2 {
@@ -147,7 +148,7 @@ impl BufferManager {
 			//.normalized()
 			.build()
 			.unwrap()
-			.take(T)
+			.take(out_size)
 			.map(|Complex { re, im }| {
 				let power = f32::sqrt(re * re + im * im);
 				let value = power / fft.scaling_factor;
