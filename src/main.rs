@@ -30,6 +30,7 @@ mod pipewire;
 mod cli;
 
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
+const SERVICE_TYPE: &str = "_nanoleafapi._tcp.local.";
 
 fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Vec<Hsl>>, intensity: f32) {
     // Needs to be over a sliding window.
@@ -91,8 +92,7 @@ fn discover_host(config: &Config) -> (String, u16) {
             log::info!("Discovering nanoleaf via mdns");
             let mdns: ServiceDaemon = ServiceDaemon::new().expect("Failed to create daemon");
             // Browse for a service type.
-            let service_type = "_nanoleafapi._tcp.local.";
-            let receiver = mdns.browse(service_type).expect("Failed to browse");
+            let receiver = mdns.browse(SERVICE_TYPE).expect("Failed to browse");
             while let Ok(event) = receiver.recv() {
                 match event {
                     ServiceEvent::ServiceFound(service, extra) => {
