@@ -30,37 +30,6 @@ mod pipewire;
 mod cli;
 
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
-const MDNS_TIMEOUT: Duration = Duration::from_secs(30);
-
-
-// pub fn set_flags() -> Command {
-//     let app = Command::new("leafpipe")
-//         .version(env!("CARGO_PKG_VERSION"))
-//         .author(env!("CARGO_PKG_AUTHORS"))
-//         .about("Match RGB iot lighting with wayland compositor output.")
-//         .arg(
-//             arg!(-d - -debug)
-//                 .required(false)
-//                 .help("Enable debug mode"),
-//         )
-//         .arg(
-//             arg!(-l - -listoutputs)
-//                 .required(false)
-//                 .help("List all valid outputs"),
-//         )
-//         .arg(
-//             arg!(-o --output <OUTPUT>)
-//                 .required(false)
-//                 .help("Choose a particular output to use"),
-//         )
-//         .arg(
-//             arg!(-i --intensity <intensity>)
-//                 .default_value(15.0f32)
-//                 .help("Choose a particular output to use"),
-//         );
-//     app
-// }
-
 
 fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Vec<Hsl>>, intensity: f32) {
     // Needs to be over a sliding window.
@@ -97,7 +66,7 @@ fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffe
                     }
                 }
                 if let Err(err) = nanoleaf.send_effect(&effect) {
-                    println!("Failed to send effect to nanoleaf {:?}", err);
+                    log::warn!("Failed to send effect to nanoleaf {:?}", err);
                 }
             }
         }
@@ -119,17 +88,21 @@ fn discover_host(config: &Config) -> (String, u16) {
             )
         },
         Err(ConfigError::NotFound(_err)) => {
-            println!("Discovering nanoleaf via mdns");
+            log::info!("Discovering nanoleaf via mdns");
             let mdns: ServiceDaemon = ServiceDaemon::new().expect("Failed to create daemon");
             // Browse for a service type.
             let service_type = "_nanoleafapi._tcp.local.";
             let receiver = mdns.browse(service_type).expect("Failed to browse");
-            while let Ok(event) = receiver.recv_timeout(MDNS_TIMEOUT) {
+            while let Ok(event) = receiver.recv() {
                 match event {
+                    ServiceEvent::ServiceFound(service, extra) => {
+                        log::debug!("Discovered service {} {}", service, extra);
+                    }
                     ServiceEvent::ServiceResolved(info) => {
-                        println!("Discovered service {} {:?}", info.get_fullname(), info.get_addresses());
+                        log::debug!("Resolved service {} {:?}", info.get_fullname(), info.get_addresses());
                         // TODO: Support IPv6. My system doesn't :(
                         let service_ip = info.get_addresses().iter().find(|addr| addr.is_ipv4()).expect("Service found but with no addresses").to_string();
+                        mdns.shutdown().unwrap();
                         return (service_ip, info.get_port());
                     }
                     _ => {
@@ -140,7 +113,7 @@ fn discover_host(config: &Config) -> (String, u16) {
             panic!("Failed to find nanoleaf");
         }
         Err(err) => {
-            println!("Encountered error with config {:?}", err);
+            log::warn!("Encountered error with config {:?}", err);
             panic!("Unexpected error handling config")
         }
     }
@@ -194,7 +167,7 @@ fn configure_display(pause_duration:time::Duration, panel_count: usize, output_n
             let hsl = visual::prominent_color::determine_prominent_color(frame_copy, &mut heatmap);
             let value_hash: f32 = hsl.iter().map(|f| f.get_hue() + f.get_lightness() + f.get_saturation()).sum();
             if value_hash != last_value {
-                log::info!("Sending new hsl {:?}", hsl);
+                log::debug!("Sending new hsl {:?}", hsl);
                 tx.send(hsl).unwrap();
                 last_value = value_hash;
             }
@@ -217,9 +190,6 @@ async fn main() -> std::io::Result<()> {
     };
 
     env_logger::init();
-    // if flags.get_flag("debug") {
-    //     log::set_max_level(log::LevelFilter::Trace);
-    // }
     log::trace!("Logger initialized.");
 
     let buffer_manager: Arc<RwLock<BufferManager>> = Arc::new(RwLock::new(BufferManager::default()));
@@ -228,7 +198,7 @@ async fn main() -> std::io::Result<()> {
     let pipewire = crate::pipewire::PipewireContainer::new(buffer_manager).expect("Could not configure pipewire");
 
     let service = discover_host(&config);
-    println!("Discovered nanoleaf on {}:{}", service.0, service.1);
+    log::info!("Discovered nanoleaf on {}:{}", service.0, service.1);
 
     let nanoleaf: NanoleafClient = NanoleafClient::connect(
         config.get_string("nanoleaf_token").expect("Missing nanoleaf_token config"),

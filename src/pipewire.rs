@@ -104,9 +104,7 @@ impl PipewireContainer {
         .unwrap()
         .0
         .into_inner();
-    
-        println!("vals: {:?}", values);
-    
+
         let mut params = [Pod::from_bytes(&values).unwrap()];
         stream.connect(
             Direction::Input,
