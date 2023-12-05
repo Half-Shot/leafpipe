@@ -144,8 +144,6 @@ impl BufferManager {
 		Some(Linear::builder()
 			.elements(&truncated_data[range])
 			.knots(power_range(POWER_FREQ, count).as_ref())
-			//.equidistant::<f32>()
-			//.normalized()
 			.build()
 			.unwrap()
 			.take(out_size)

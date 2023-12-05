@@ -32,7 +32,7 @@ mod cli;
 const LIGHT_INTERVAL: Duration = Duration::from_millis(100);
 const SERVICE_TYPE: &str = "_nanoleafapi._tcp.local.";
 
-fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Vec<Hsl>>, intensity: f32) {
+fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffer_manager: Arc<RwLock<BufferManager>>, color_channel: Receiver<Vec<Hsl>>, intensity_modifier: f32) {
     // Needs to be over a sliding window.
     let mut window = SlidingWindow::new(64);
     let mut color_set: Vec<Hsl> = Vec::new();
@@ -51,15 +51,15 @@ fn update_lights(panels: NanoleafLayoutResponse, nanoleaf: NanoleafClient, buffe
         {
             if let Ok(v) = color_channel.try_recv() {
                 color_set = v;
-            }
+            } // else, use the previous value.
 
-            if let Some(data) = buffer_manager.write().unwrap().fft_interval(LIGHT_INTERVAL, panels.num_panels) {
+            if let Some(audio_data) = buffer_manager.write().unwrap().fft_interval(LIGHT_INTERVAL, panels.num_panels) {
                 let mut effect = NanoleafEffectPayload::new(panels.num_panels);
                 for (panel_index, panel) in sorted_panels.iter().enumerate() {
                     if let Some(color) = color_set.get(panel_index) {
-                        let (min, max) = window.submit_new(data[panel_index]);
+                        let (min, max) = window.submit_new(audio_data[panel_index]);
                         let base_int = color.get_lightness() - 10.0;
-                        let intensity = (base_int + ((data[panel_index] + min) / max) * intensity * (panel_index as f32 + 1.0f32).powf(1.05f32)).clamp(5.0, 80.0);
+                        let intensity = (base_int + ((audio_data[panel_index] + min) / max) * intensity_modifier * (panel_index as f32 + 1.0f32).powf(1.05f32)).clamp(5.0, 80.0);
                         let hsl = Hsl::from(color.get_hue(), color.get_saturation(), intensity);
                         let rgb = hsl.to_rgb().as_tuple();
                         let r = rgb.0.round() as u8;
