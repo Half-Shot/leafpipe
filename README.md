@@ -7,6 +7,8 @@ via the output of PipeWire (Linux audio stack).
 The code to pull and analyse the audio files was heavily based upon the work in
 https://github.com/BlankParenthesis/visualiser.
 
+[See the blog post!](https://half-shot.uk/blog/leafpipe/)
+
 
 ## Getting Started
 
